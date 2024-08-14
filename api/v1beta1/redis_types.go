@@ -17,6 +17,7 @@ limitations under the License.
 package v1beta1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -25,11 +26,16 @@ import (
 
 // RedisSpec defines the desired state of Redis
 type RedisSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of Redis. Edit redis_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	Image             string                      `json:"image"`
+	ExporterImage     string                      `json:"exporterImage"`
+	Port              int32                       `json:"port"`
+	ExporterPort      int32                       `json:"exporterPort"`
+	Resources         corev1.ResourceRequirements `json:"resources"`
+	ExporterResources corev1.ResourceRequirements `json:"exporterResources"`
+	VolumeSize        string                      `json:"volumeSize"`
+	ServiceType       corev1.ServiceType          `json:"serviceType"`
+	LivenessProbe     *corev1.Probe               `json:"livenessProbe"`
+	ReadinessProbe    *corev1.Probe               `json:"readinessProbe"`
 }
 
 // RedisStatus defines the observed state of Redis

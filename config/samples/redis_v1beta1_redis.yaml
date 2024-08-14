@@ -9,4 +9,19 @@ metadata:
     app.kubernetes.io/created-by: redis-operator
   name: redis-sample
 spec:
-  # TODO(user): Add fields here
+  image: awbrg789/redis:latest
+  port: 10000
+  resources:
+    limits:
+      cpu: "2"
+      memory: 2000Mi
+    requests:
+      cpu: "2"
+      memory: 2000Mi
+  exporterResources:
+    limits:
+      cpu: "1"
+      memory: 500Mi
+    requests:
+      cpu: "0.5"
+      memory: 500Mi
