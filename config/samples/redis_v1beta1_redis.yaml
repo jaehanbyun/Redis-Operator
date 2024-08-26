@@ -11,6 +11,7 @@ metadata:
 spec:
   image: awbrg789/redis:latest
   port: 10000
+  memory: 256mb
   resources:
     limits:
       cpu: "2"
