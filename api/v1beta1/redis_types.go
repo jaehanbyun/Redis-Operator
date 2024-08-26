@@ -26,16 +26,12 @@ import (
 
 // RedisSpec defines the desired state of Redis
 type RedisSpec struct {
-	Image             string                      `json:"image"`
-	ExporterImage     string                      `json:"exporterImage"`
-	Port              int32                       `json:"port"`
-	ExporterPort      int32                       `json:"exporterPort"`
-	Resources         corev1.ResourceRequirements `json:"resources"`
-	ExporterResources corev1.ResourceRequirements `json:"exporterResources"`
-	VolumeSize        string                      `json:"volumeSize"`
-	ServiceType       corev1.ServiceType          `json:"serviceType"`
-	LivenessProbe     *corev1.Probe               `json:"livenessProbe"`
-	ReadinessProbe    *corev1.Probe               `json:"readinessProbe"`
+	Image             string                       `json:"image"`
+	Port              int32                        `json:"port"`
+	Memory            string                       `json:"memory"`
+	Resources         *corev1.ResourceRequirements `json:"resources,omitempty"`
+	ExporterResources *corev1.ResourceRequirements `json:"exporterResources,omitempty"`
+	HostNetwork       bool                         `json:"hostNetwork,omitempty"`
 }
 
 // RedisStatus defines the observed state of Redis
