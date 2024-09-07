@@ -57,9 +57,10 @@ type RedisReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	redisLogger := r.Log.WithValues("redis", req.NamespacedName)
+	redisLogger.Info("Redis를 조정중입니다.")
 
-	var redis redisv1beta1.Redis
-	if err := r.Get(ctx, req.NamespacedName, &redis); err != nil {
+	redis := &redisv1beta1.Redis{}
+	if err := r.Get(ctx, req.NamespacedName, redis); err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
@@ -67,29 +68,35 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
-	// Finalinzer 추가
-	if !controllerutil.ContainsFinalizer(&redis, RedisFinalizer) {
-		redisLogger.Info("Finalizer 추가")
-		controllerutil.AddFinalizer(&redis, RedisFinalizer)
-		return ctrl.Result{}, r.Update(ctx, &redis)
-	}
-
 	// 삭제
 	if !redis.DeletionTimestamp.IsZero() {
-		redisLogger.Info("Redis 삭제")
-		return r.reconcileDelete(ctx, redisLogger, &redis)
+		if controllerutil.ContainsFinalizer(redis, RedisFinalizer) {
+			return r.reconcileDelete(ctx, redisLogger, redis)
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Finalizer 추가
+	if !controllerutil.ContainsFinalizer(redis, RedisFinalizer) {
+		redisLogger.Info("Finalizer 추가")
+		controllerutil.AddFinalizer(redis, RedisFinalizer)
+		if err := r.Update(ctx, redis); err != nil {
+			redisLogger.Info("Finalizer 추가 중 에러 발생")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	redisLogger.Info("StatefulSet 생성")
 
-	err := r.createOrUpdateStatefulSet(ctx, &redis)
+	err := r.createOrUpdateRedisSts(ctx, redis)
 	if err != nil {
 		redisLogger.Error(err, "StatefulSet을 생성 또는 업데이트하는 데 실패했습니다!")
 		return ctrl.Result{}, err
 	}
 
 	redisLogger.Info("Service 생성")
-	err = r.createOrUpdateService(ctx, &redis)
+	err = r.createOrUpdateRedisSvc(ctx, redis)
 	if err != nil {
 		redisLogger.Error(err, "Service를 생성 또는 업데이트하는 데 실패했습니다!")
 		return ctrl.Result{}, err
@@ -98,16 +105,18 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	return ctrl.Result{}, nil
 }
 
-func (r *RedisReconciler) createOrUpdateStatefulSet(ctx context.Context, redis *redisv1beta1.Redis) error {
+func (r *RedisReconciler) createOrUpdateRedisSts(ctx context.Context, redis *redisv1beta1.Redis) error {
 	statefulSet := appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      redis.Name,
 			Namespace: redis.Namespace,
 			Labels:    labelForRedis(redis.Name),
+			OwnerReferences: []metav1.OwnerReference{
+				*metav1.NewControllerRef(redis, redisv1beta1.GroupVersion.WithKind("Redis")),
+			},
 		},
 		Spec: appsv1.StatefulSetSpec{
-			ServiceName: redis.Name,
-			Replicas:    int32Ptr(1),
+			Replicas: int32Ptr(1),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: labelForRedis(redis.Name),
 			},
@@ -197,7 +206,7 @@ func int32Ptr(i int32) *int32 {
 	return &i
 }
 
-func (r *RedisReconciler) createOrUpdateService(ctx context.Context, redis *redisv1beta1.Redis) error {
+func (r *RedisReconciler) createOrUpdateRedisSvc(ctx context.Context, redis *redisv1beta1.Redis) error {
 	// HostNetwork가 true이면 Service를 생성하지 않음
 	if redis.Spec.HostNetwork {
 		r.Log.Info("HostNetwork가 활성화되어 있으므로 Service를 생성하지 않습니다.")
@@ -262,5 +271,6 @@ func labelForRedis(name string) map[string]string {
 func (r *RedisReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&redisv1beta1.Redis{}).
+		Owns(&appsv1.StatefulSet{}).
 		Complete(r)
 }
