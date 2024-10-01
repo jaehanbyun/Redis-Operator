@@ -17,6 +17,7 @@ limitations under the License.
 package v1beta1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -25,17 +26,27 @@ import (
 
 // RedisClusterSpec defines the desired state of RedisCluster
 type RedisClusterSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of RedisCluster. Edit rediscluster_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	Image             string                       `json:"image"`
+	Masters           int32                        `json:"masters"`
+	Replicas          int32                        `json:"replicas"`
+	BasePort          int32                        `json:"basePort"`
+	Maxmemory         string                       `json:"maxMemory"`
+	Resources         *corev1.ResourceRequirements `json:"resources,omitempty"`
+	ExporterResources *corev1.ResourceRequirements `json:"exporterResources,omitempty"`
 }
 
 // RedisClusterStatus defines the observed state of RedisCluster
 type RedisClusterStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	ReadyMasters  int32                      `json:"readyMasters,omitempty"`
+	ReadyReplicas int32                      `json:"readyReplicas,omitempty"`
+	MasterMap     map[string]RedisNodeStatus `json:"masterMap,omitempty"`  // Key: NodeID
+	ReplicaMap    map[string]RedisNodeStatus `json:"replicaMap,omitempty"` // Key: NodeID
+}
+
+type RedisNodeStatus struct {
+	PodName      string `json:"podName"`
+	NodeID       string `json:"nodeID"`
+	MasterNodeID string `json:"masterNodeID,omitempty"`
 }
 
 //+kubebuilder:object:root=true
