@@ -72,6 +72,7 @@ spec:
             - --leader-elect
           image: awbrg789/redis-operator:latest
           name: manager
+          imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
