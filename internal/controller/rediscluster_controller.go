@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -111,6 +112,95 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 		clusterLogger.Info("Redis cluster created successfully")
 
+		if err := utils.UpdateClusterStatus(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
+			clusterLogger.Error(err, "Error updating cluster status")
+			return ctrl.Result{}, err
+		}
+
+		currentMasterCount = int32(len(redisCluster.Status.MasterMap))
+	}
+
+	// Handle master scaling
+	// if the current number of master nodes is less than the desired count
+	if currentMasterCount < desiredMasterCount {
+		mastersToAdd := desiredMasterCount - currentMasterCount
+		clusterLogger.Info("Scaling up masters", "Masters to add", mastersToAdd)
+		for i := int32(0); i < mastersToAdd; i++ {
+			port, err := utils.FindAvailablePort(r.Client, redisCluster, clusterLogger)
+			if err != nil {
+				clusterLogger.Error(err, "Failed to find available port")
+				return ctrl.Result{}, err
+			}
+
+			if err := utils.CreateMasterPod(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger, port); err != nil {
+				clusterLogger.Error(err, "Error creating master Pod")
+				return ctrl.Result{}, err
+			}
+
+			newMasterPodName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
+			if err := utils.WaitForPodReady(ctx, r.Client, redisCluster, clusterLogger, newMasterPodName); err != nil {
+				clusterLogger.Error(err, "Error waiting for new master Pod to be ready", "Pod", newMasterPodName)
+				return ctrl.Result{}, err
+			}
+
+			newMasterNodeID, err := utils.GetRedisNodeID(ctx, r.K8sClient, clusterLogger, redisCluster.Namespace, newMasterPodName)
+			if err != nil {
+				clusterLogger.Error(err, "Error getting NodeID of new master", "Pod", newMasterPodName)
+				return ctrl.Result{}, err
+			}
+
+			newMaster := redisv1beta1.RedisNodeStatus{
+				PodName: newMasterPodName,
+				NodeID:  newMasterNodeID,
+			}
+
+			if err := utils.AddMasterToCluster(r.K8sClient, redisCluster, clusterLogger, newMaster); err != nil {
+				clusterLogger.Error(err, "Error adding new master to cluster", "NodeID", newMasterNodeID)
+				return ctrl.Result{}, err
+			}
+
+			if err := utils.UpdateClusterStatus(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
+				clusterLogger.Error(err, "Error updating cluster status")
+				return ctrl.Result{}, err
+			}
+
+			currentMasterCount = int32(len(redisCluster.Status.MasterMap))
+		}
+	} else if currentMasterCount > desiredMasterCount {
+		mastersToRemove := currentMasterCount - desiredMasterCount
+		clusterLogger.Info("Scaling down masters", "Masters to remove", mastersToRemove)
+
+		mastersToRemoveList := utils.GetMastersToRemove(redisCluster, mastersToRemove, clusterLogger)
+
+		for _, masterNodeID := range mastersToRemoveList {
+			master := redisCluster.Status.MasterMap[masterNodeID]
+
+			err := utils.ReShardRedisCluster(ctx, r.K8sClient, redisCluster, clusterLogger, master)
+			if err != nil {
+				clusterLogger.Error(err, "Error migrating slots from master", "MasterNodeID", masterNodeID)
+				return ctrl.Result{}, err
+			}
+
+			err = utils.RemoveReplicasOfMaster(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger, masterNodeID)
+			if err != nil {
+				clusterLogger.Error(err, "Error removing replicas of master", "MasterNodeID", masterNodeID)
+				return ctrl.Result{}, err
+			}
+
+			err = utils.DeleteRedisPod(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger, master.PodName)
+			if err != nil {
+				clusterLogger.Error(err, "Error deleting master Pod", "PodName", master.PodName)
+				return ctrl.Result{}, err
+			}
+
+			delete(redisCluster.Status.MasterMap, masterNodeID)
+			redisCluster.Status.ReadyMasters = int32(len(redisCluster.Status.MasterMap))
+
+			if err := r.Status().Update(ctx, redisCluster); err != nil {
+				clusterLogger.Error(err, "Error updating RedisCluster status")
+				return ctrl.Result{}, err
+			}
+		}
 		if err := utils.UpdateClusterStatus(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
 			clusterLogger.Error(err, "Error updating cluster status")
 			return ctrl.Result{}, err

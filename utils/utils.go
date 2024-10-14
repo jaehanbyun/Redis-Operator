@@ -252,7 +252,6 @@ func GenerateRedisPodDef(redisCluster *redisv1beta1.RedisCluster, port int32, ma
 	return pod
 }
 
-
 func GetPodNameByNodeID(k8scl kubernetes.Interface, namespace string, nodeID string, logger logr.Logger) (string, error) {
 	podList, err := k8scl.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("redisNodeID=%s", nodeID),
@@ -275,4 +274,42 @@ func containsFlag(flags []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func DeleteRedisPod(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string) error {
+	pod := &corev1.Pod{}
+	err := cl.Get(ctx, client.ObjectKey{Namespace: redisCluster.Namespace, Name: podName}, pod)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("Replica Pod to delete does not exist", "Pod", podName)
+			return nil
+		}
+		logger.Error(err, "Failed to get Pod", "Pod", podName)
+		return err
+	}
+
+	err = cl.Delete(ctx, pod)
+	if err != nil {
+		logger.Error(err, "Error deleting Pod", "Pod", podName)
+		return err
+	}
+
+	logger.Info("Pod deletion requested", "Pod", podName)
+	return nil
+}
+
+func GetMastersToRemove(redisCluster *redisv1beta1.RedisCluster, mastersToRemove int32, logger logr.Logger) []string {
+	var mastersToRemoveList []string
+	count := int32(0)
+
+	for nodeID := range redisCluster.Status.MasterMap {
+		mastersToRemoveList = append(mastersToRemoveList, nodeID)
+		count++
+		if count >= mastersToRemove {
+			break
+		}
+	}
+
+	logger.Info("Masters selected for removal", "Masters", mastersToRemoveList)
+	return mastersToRemoveList
 }

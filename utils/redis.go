@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
+	"github.com/redis/go-redis/v9"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -30,6 +31,15 @@ func GetRedisServerIP(k8scl kubernetes.Interface, logger logr.Logger, namespace 
 		return ""
 	}
 	return pod.Status.PodIP
+}
+
+func ConfigureRedisClient(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string) *redis.Client {
+	addr := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, podName)
+	opts := &redis.Options{
+		Addr: addr,
+		DB:   0,
+	}
+	return redis.NewClient(opts)
 }
 
 func CreateClusterCommand(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) []string {

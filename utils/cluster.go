@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
@@ -74,7 +75,6 @@ func SetupRedisCluster(ctx context.Context, cl client.Client, k8scl kubernetes.I
 	desiredMastersCount := redisCluster.Spec.Masters
 	currentMasterCount := int32(len(redisCluster.Status.MasterMap))
 
-	// Initialize MasterMap if nil
 	if redisCluster.Status.MasterMap == nil {
 		redisCluster.Status.MasterMap = make(map[string]redisv1beta1.RedisNodeStatus)
 	}
@@ -156,5 +156,118 @@ func UpdateClusterStatus(ctx context.Context, cl client.Client, k8scl kubernetes
 		return err
 	}
 
+	return nil
+}
+
+func WaitForClusterStabilization(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) error {
+	timeout := time.After(30 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("cluster stabilization timed out")
+		case <-ticker.C:
+			nodesAgree, err := CheckClusterConfigurationAgreement(k8scl, redisCluster, logger)
+			if err != nil {
+				logger.Error(err, "Error checking cluster configuration")
+				continue
+			}
+			if nodesAgree {
+				logger.Info("Cluster nodes have agreed on the configuration")
+				return nil
+			} else {
+				logger.Info("Cluster nodes have not yet agreed on the configuration. Waiting...")
+			}
+		}
+	}
+}
+
+func CheckClusterConfigurationAgreement(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger) (bool, error) {
+	var configEpoch string
+
+	for _, master := range redisCluster.Status.MasterMap {
+		podName := master.PodName
+		namespace := redisCluster.Namespace
+
+		port := ExtractPortFromPodName(podName)
+
+		cmd := []string{"redis-cli", "-p", fmt.Sprintf("%d", port), "cluster", "info"}
+		logger.Info("Executing command", "Pod", podName, "Command", strings.Join(cmd, " "))
+
+		output, err := RunRedisCLI(k8scl, namespace, podName, cmd)
+		if err != nil {
+			return false, err
+		}
+
+		lines := strings.Split(output, "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "config-epoch:") {
+				epoch := strings.TrimSpace(strings.Split(line, ":")[1])
+				if configEpoch == "" {
+					configEpoch = epoch
+				} else if configEpoch != epoch {
+					return false, nil
+				}
+			}
+		}
+	}
+	return true, nil
+}
+
+func RemoveNodeFromCluster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, node redisv1beta1.RedisNodeStatus) error {
+	var existingMaster redisv1beta1.RedisNodeStatus
+	for _, m := range redisCluster.Status.MasterMap {
+		if m.NodeID != node.NodeID {
+			existingMaster = m
+			break
+		}
+	}
+
+	if existingMaster.NodeID == "" {
+		return fmt.Errorf("no existing master available to remove node")
+	}
+
+	existingMasterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, existingMaster.PodName)
+
+	delNodeCmd := []string{"redis-cli", "--cluster", "del-node", existingMasterAddress, node.NodeID}
+
+	logger.Info("Removing node from cluster", "Command", delNodeCmd)
+	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, existingMaster.PodName, delNodeCmd)
+	if err != nil {
+		logger.Error(err, "Error removing node from cluster", "Output", output)
+		return err
+	}
+
+	logger.Info("Node removed from cluster", "NodePod", node.PodName)
+	return nil
+}
+
+func RemoveReplicasOfMaster(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, masterNodeID string) error {
+	var replicasToRemove []redisv1beta1.RedisNodeStatus
+
+	for nodeID, replica := range redisCluster.Status.ReplicaMap {
+		if replica.MasterNodeID == masterNodeID {
+			replicasToRemove = append(replicasToRemove, replica)
+			delete(redisCluster.Status.ReplicaMap, nodeID)
+		}
+	}
+
+	for _, replica := range replicasToRemove {
+		err := RemoveNodeFromCluster(k8scl, redisCluster, logger, replica)
+		if err != nil {
+			logger.Error(err, "Error removing replica from cluster", "ReplicaNodeID", replica.NodeID)
+			return err
+		}
+
+		err = DeleteRedisPod(ctx, cl, k8scl, redisCluster, logger, replica.PodName)
+		if err != nil {
+			logger.Error(err, "Error deleting replica Pod", "PodName", replica.PodName)
+			return err
+		}
+	}
+
+	redisCluster.Status.ReadyReplicas = int32(len(redisCluster.Status.ReplicaMap))
 	return nil
 }
