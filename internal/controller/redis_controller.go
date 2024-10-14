@@ -45,16 +45,8 @@ type RedisReconciler struct {
 //+kubebuilder:rbac:groups=redis.redis,resources=redis,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=redis.redis,resources=redis/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=redis.redis,resources=redis/finalizers,verbs=update
+//+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Hello object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	redisLogger := r.Log.WithValues("redis", req.NamespacedName)
 	redisLogger.Info("Redis를 조정중입니다.")
@@ -175,6 +167,9 @@ func (r *RedisReconciler) createOrUpdateRedisSts(ctx context.Context, redis *red
 									ContainerPort: redis.Spec.Port + 5000,
 									HostPort:      redis.Spec.Port + 5000,
 								},
+							},
+							Command: []string{
+								"redis_exporter", "--web.listen-address", fmt.Sprintf(":%d", redis.Spec.Port+5000),
 							},
 						},
 					},
