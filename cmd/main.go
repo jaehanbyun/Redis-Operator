@@ -23,6 +23,7 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -131,8 +132,10 @@ func main() {
 		os.Exit(1)
 	}
 	if err = (&controller.RedisClusterReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:    mgr.GetClient(),
+		K8sClient: kubernetes.NewForConfigOrDie(mgr.GetConfig()),
+		Log:       ctrl.Log.WithName("controllers").WithName("RedisCluster"),
+		Scheme:    mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "RedisCluster")
 		os.Exit(1)
