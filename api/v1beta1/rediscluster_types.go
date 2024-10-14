@@ -49,9 +49,13 @@ type RedisNodeStatus struct {
 	MasterNodeID string `json:"masterNodeID,omitempty"`
 }
 
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
-
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="MASTERS",type=integer,JSONPath=`.spec.masters`,description="Number of master nodes"
+// +kubebuilder:printcolumn:name="REPLICAS",type=integer,JSONPath=`.spec.replicas`,description="Number of replica nodes"
+// +kubebuilder:printcolumn:name="MAXMEMORY",type=string,JSONPath=`.spec.maxmemory`,description="Maximum memory for Redis nodes"
+// +kubebuilder:printcolumn:name="BASEPORT",type=integer,JSONPath=`.spec.basePort`,description="Base port for Redis nodes"
+// +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=`.metadata.creationTimestamp`,description="Age of the Redis cluster"
 // RedisCluster is the Schema for the redisclusters API
 type RedisCluster struct {
 	metav1.TypeMeta   `json:",inline"`
