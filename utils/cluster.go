@@ -271,3 +271,33 @@ func RemoveReplicasOfMaster(ctx context.Context, cl client.Client, k8scl kuberne
 	redisCluster.Status.ReadyReplicas = int32(len(redisCluster.Status.ReplicaMap))
 	return nil
 }
+
+func AddReplicaToMaster(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, replica redisv1beta1.RedisNodeStatus) error {
+	master, exists := redisCluster.Status.MasterMap[replica.MasterNodeID]
+	if !exists {
+		errMsg := "Master node not found"
+		err := fmt.Errorf("%s: MasterNodeID=%s", errMsg, replica.MasterNodeID)
+		logger.Error(err, errMsg, "MasterNodeID", replica.MasterNodeID)
+		return err
+	}
+
+	masterAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, master.PodName)
+	replicaAddress := GetRedisServerAddress(k8scl, logger, redisCluster.Namespace, replica.PodName)
+
+	addNodeCmd := []string{"redis-cli", "--cluster", "add-node", replicaAddress, masterAddress, "--cluster-slave"}
+	output, err := RunRedisCLI(k8scl, redisCluster.Namespace, master.PodName, addNodeCmd)
+	if err != nil {
+		logger.Error(err, "Error adding replica to master", "Output", output)
+		return err
+	}
+	logger.Info("Successfully added replica to master", "Replica", replica.PodName, "Master", master.PodName)
+
+	err = WaitForNodeRole(k8scl, redisCluster, logger, replica.NodeID, "slave", 30*time.Second)
+	if err != nil {
+		logger.Error(err, "Node did not transition to replica role", "NodeID", replica.NodeID)
+		return err
+	}
+	logger.Info("Node transitioned to replica role", "NodeID", replica.NodeID)
+
+	return nil
+}

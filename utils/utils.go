@@ -85,6 +85,33 @@ func CreateMasterPod(ctx context.Context, cl client.Client, k8scl kubernetes.Int
 	return nil
 }
 
+func CreateReplicaPod(ctx context.Context, cl client.Client, k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, port int32, masterNodeID string) error {
+	podName := fmt.Sprintf("rediscluster-%s-%d", redisCluster.Name, port)
+	replicaPod := GenerateRedisPodDef(redisCluster, port, masterNodeID)
+	err := cl.Create(ctx, replicaPod)
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return err
+	}
+
+	if err := WaitForPodReady(ctx, cl, redisCluster, logger, podName); err != nil {
+		logger.Error(err, "Error waiting for replica Pod to be ready", "Pod", podName)
+		return err
+	}
+
+	redisNodeID, err := GetRedisNodeID(ctx, k8scl, logger, redisCluster.Namespace, podName)
+	if err != nil {
+		logger.Error(err, "Failed to extract Redis node ID", "Pod", podName)
+		return err
+	}
+
+	if err := UpdatePodLabelWithRedisID(ctx, cl, redisCluster, logger, podName, redisNodeID); err != nil {
+		logger.Error(err, "Failed to update Pod label", "Pod", podName)
+		return err
+	}
+
+	return nil
+}
+
 func WaitForPodReady(ctx context.Context, cl client.Client, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, podName string) error {
 	pod := &corev1.Pod{}
 	for {
@@ -312,4 +339,49 @@ func GetMastersToRemove(redisCluster *redisv1beta1.RedisCluster, mastersToRemove
 
 	logger.Info("Masters selected for removal", "Masters", mastersToRemoveList)
 	return mastersToRemoveList
+}
+
+func WaitForNodeRole(k8scl kubernetes.Interface, redisCluster *redisv1beta1.RedisCluster, logger logr.Logger, nodeID string, expectedRole string, timeout time.Duration) error {
+	startTime := time.Now()
+	for {
+		elapsed := time.Since(startTime)
+		if elapsed > timeout {
+			return fmt.Errorf("node %s did not transition to role %s", nodeID, expectedRole)
+		}
+
+		nodesInfo, err := GetClusterNodesInfo(k8scl, redisCluster, logger)
+		if err != nil {
+			logger.Error(err, "Failed to get cluster node information")
+			return err
+		}
+
+		for _, node := range nodesInfo {
+			if node.NodeID == nodeID {
+				flagsList := strings.Split(node.Flags, ",")
+				if containsFlag(flagsList, expectedRole) {
+					return nil
+				}
+				break
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func GetReplicasToRemoveFromMaster(redisCluster *redisv1beta1.RedisCluster, masterNodeID string, replicasToRemove int32, logger logr.Logger) []string {
+	var replicasToRemoveList []string
+	count := int32(0)
+
+	for nodeID, replica := range redisCluster.Status.ReplicaMap {
+		if replica.MasterNodeID == masterNodeID {
+			replicasToRemoveList = append(replicasToRemoveList, nodeID)
+			count++
+			if count >= replicasToRemove {
+				break
+			}
+		}
+	}
+
+	logger.Info("Replicas selected for removal from master", "MasterNodeID", masterNodeID, "Replicas", replicasToRemoveList)
+	return replicasToRemoveList
 }
