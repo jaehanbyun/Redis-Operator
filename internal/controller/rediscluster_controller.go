@@ -18,18 +18,22 @@ package controller
 
 import (
 	"context"
+	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
+	"github.com/go-logr/logr"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
 )
 
 // RedisClusterReconciler reconciles a RedisCluster object
 type RedisClusterReconciler struct {
 	client.Client
+	Log    logr.Logger
 	Scheme *runtime.Scheme
 }
 
@@ -37,20 +41,58 @@ type RedisClusterReconciler struct {
 //+kubebuilder:rbac:groups=redis.redis,resources=redisclusters/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=redis.redis,resources=redisclusters/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the RedisCluster object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.16.3/pkg/reconcile
+const RedisClusterFinalizer string = "redisClusterFinalizer"
+
 func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	clusterLogger := r.Log.WithValues("redisCluster", req.NamespacedName)
+	clusterLogger.Info("Reconciling RedisCluster")
 
-	// TODO(user): your logic here
+	redisCluster := &redisv1beta1.RedisCluster{}
+	if err := r.Get(ctx, req.NamespacedName, redisCluster); err != nil {
+		if errors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		clusterLogger.Error(err, "Failed to get RedisCluster")
+		return ctrl.Result{}, err
+	}
 
+	// Handle deletion
+	if !redisCluster.DeletionTimestamp.IsZero() {
+		clusterLogger.Info("Deleting RedisCluster")
+		if controllerutil.ContainsFinalizer(redisCluster, RedisClusterFinalizer) {
+			return r.reconcileDelete(ctx, clusterLogger, redisCluster)
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Add finalizer
+	if !controllerutil.ContainsFinalizer(redisCluster, RedisClusterFinalizer) {
+		clusterLogger.Info("Adding finalizer")
+		controllerutil.AddFinalizer(redisCluster, RedisClusterFinalizer)
+		err := r.Update(ctx, redisCluster)
+		if err != nil {
+			clusterLogger.Info("Error adding finalizer")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	return ctrl.Result{
+		Requeue:      true,
+		RequeueAfter: time.Second * 10,
+	}, nil
+}
+
+func (r *RedisClusterReconciler) reconcileDelete(ctx context.Context, logger logr.Logger, redisCluster *redisv1beta1.RedisCluster) (ctrl.Result, error) {
+	logger.Info("Removing finalizer")
+
+	controllerutil.RemoveFinalizer(redisCluster, RedisClusterFinalizer)
+	err := r.Update(ctx, redisCluster)
+	if err != nil {
+		logger.Error(err, "Error removing finalizer")
+		return ctrl.Result{}, err
+	}
+	logger.Info("Finalizer removed")
 	return ctrl.Result{}, nil
 }
 
