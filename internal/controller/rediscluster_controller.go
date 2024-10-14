@@ -22,19 +22,22 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/go-logr/logr"
 	redisv1beta1 "github.com/jaehanbyun/redis-operator/api/v1beta1"
+	"github.com/jaehanbyun/redis-operator/utils"
 )
 
 // RedisClusterReconciler reconciles a RedisCluster object
 type RedisClusterReconciler struct {
 	client.Client
-	Log    logr.Logger
-	Scheme *runtime.Scheme
+	K8sClient kubernetes.Interface
+	Log       logr.Logger
+	Scheme    *runtime.Scheme
 }
 
 //+kubebuilder:rbac:groups=redis.redis,resources=redisclusters,verbs=get;list;watch;create;update;patch;delete
@@ -75,6 +78,42 @@ func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
+	}
+
+	desiredMasterCount := redisCluster.Spec.Masters
+	// desiredReplicasPerMaster := redisCluster.Spec.Replicas
+
+	currentMasterCount := int32(len(redisCluster.Status.MasterMap))
+	// currentReplicaCount := int32(len(redisCluster.Status.ReplicaMap))
+
+	// Initialize cluster
+	if currentMasterCount == 0 && desiredMasterCount > 0 {
+		clusterLogger.Info("Initializing cluster")
+		if err := utils.SetupRedisCluster(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
+			clusterLogger.Error(err, "Error setting up Redis cluster")
+			return ctrl.Result{}, err
+		}
+
+		cmd := utils.CreateClusterCommand(r.K8sClient, redisCluster, clusterLogger)
+		var firstMasterPodName string
+		for _, master := range redisCluster.Status.MasterMap {
+			firstMasterPodName = master.PodName
+			break
+		}
+
+		_, err := utils.RunRedisCLI(r.K8sClient, redisCluster.Namespace, firstMasterPodName, cmd)
+		if err != nil {
+			clusterLogger.Error(err, "Error running cluster creation command")
+			return ctrl.Result{}, err
+		}
+		clusterLogger.Info("Redis cluster created successfully")
+
+		if err := utils.UpdateClusterStatus(ctx, r.Client, r.K8sClient, redisCluster, clusterLogger); err != nil {
+			clusterLogger.Error(err, "Error updating cluster status")
+			return ctrl.Result{}, err
+		}
+
+		currentMasterCount = int32(len(redisCluster.Status.MasterMap))
 	}
 
 	return ctrl.Result{
