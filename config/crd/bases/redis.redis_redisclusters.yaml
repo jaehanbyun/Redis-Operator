@@ -14,28 +14,7 @@ spec:
     singular: rediscluster
   scope: Namespaced
   versions:
-  - additionalPrinterColumns:
-    - description: Number of master nodes
-      jsonPath: .spec.masters
-      name: MASTERS
-      type: integer
-    - description: Number of replica nodes
-      jsonPath: .spec.replicas
-      name: REPLICAS
-      type: integer
-    - description: Maximum memory for Redis nodes
-      jsonPath: .spec.maxmemory
-      name: MAXMEMORY
-      type: string
-    - description: Base port for Redis nodes
-      jsonPath: .spec.basePort
-      name: BASEPORT
-      type: integer
-    - description: Age of the Redis cluster
-      jsonPath: .metadata.creationTimestamp
-      name: AGE
-      type: date
-    name: v1beta1
+  - name: v1beta1
     schema:
       openAPIV3Schema:
         description: RedisCluster is the Schema for the redisclusters API

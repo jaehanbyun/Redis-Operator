@@ -44,6 +44,9 @@ type RedisClusterReconciler struct {
 //+kubebuilder:rbac:groups=redis.redis,resources=redisclusters/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=redis.redis,resources=redisclusters/finalizers,verbs=update
 
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
+
 const RedisClusterFinalizer string = "redisClusterFinalizer"
 
 func (r *RedisClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
